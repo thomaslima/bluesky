@@ -81,8 +81,12 @@ T_child_contra = TypeVar("T_child_contra", contravariant=True, bound=HasParent)
 #: Return type of a plan, usually None. Always optional for dry-runs.
 P = TypeVar("P")
 
+#: Send type of a plan
+S = TypeVar("S")
+
 #: Object usually returned from plan functions that is fed to the RunEngine
 MsgGenerator = Generator[Msg, Any, P]
+MsgGeneratorSP = Generator[Msg, S, P]
 
 #: Metadata passed from a plan to the RunEngine for embedding in a start document
 CustomPlanMetadata = dict[str, Any]

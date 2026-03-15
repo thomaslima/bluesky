@@ -2,7 +2,7 @@ import uuid
 from collections import ChainMap, OrderedDict, deque
 from collections.abc import Callable, Iterable
 from functools import wraps
-from typing import Optional, Union, overload
+from typing import Any, overload
 
 from typing_extensions import TypeVar
 
@@ -21,7 +21,10 @@ from .plan_stubs import (
 )
 from .utils import (
     Msg,
+    MsgGeneratorSP,
+    P,
     RunEngineControlException,
+    S,
     ensure_generator,
     get_hinted_fields,
     make_decorator,
@@ -39,8 +42,9 @@ P2 = TypeVar("P2")
 
 
 def plan_mutator(
-    plan: MsgGenerator[P], msg_proc: Callable[[Msg], tuple[Optional[MsgGenerator], Optional[MsgGenerator]]]
-) -> MsgGenerator[P]:
+    plan: MsgGeneratorSP[S, P],
+    msg_proc: Callable[[Msg], tuple[MsgGeneratorSP[S, Any] | None, MsgGeneratorSP[Any, Any] | None]],
+) -> MsgGeneratorSP[S, P]:
     """
     Alter the contents of a plan on the fly by changing or inserting messages.
 
@@ -237,7 +241,7 @@ def plan_mutator(
             result_stack.append(inner_ret)
 
 
-def msg_mutator(plan: MsgGenerator[P], msg_proc: Callable[[Msg], Optional[Msg]]) -> MsgGenerator[P]:
+def msg_mutator(plan: MsgGeneratorSP[S | None, P], msg_proc: Callable[[Msg], Msg | None]) -> MsgGeneratorSP[S, P]:
     """
     A simple preprocessor that mutates or deletes single messages in a plan.
 
@@ -599,18 +603,18 @@ def contingency_wrapper(
     final_plan=None,
     pause_for_debug=False,
     auto_raise=True,
-) -> MsgGenerator[Union[P, P2]]: ...
+) -> MsgGenerator[P | P2]: ...
 
 
 def contingency_wrapper(
     plan: MsgGenerator[P],
     *,
-    except_plan: Optional[Callable[..., MsgGenerator[P2]]] = None,
+    except_plan: Callable[..., MsgGenerator[P2]] | None = None,
     else_plan=None,
     final_plan=None,
     pause_for_debug=False,
     auto_raise=True,
-) -> MsgGenerator[Union[P, P2]] | MsgGenerator[P]:
+) -> MsgGenerator[P | P2] | MsgGenerator[P]:
     """try...except...else...finally helper
 
     See :func:`finalize_wrapper` for a simplified but less powerful
