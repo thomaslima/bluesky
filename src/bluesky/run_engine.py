@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import concurrent
 import copy
@@ -16,6 +18,7 @@ from datetime import datetime
 from enum import Enum
 from inspect import iscoroutine
 from itertools import count
+from typing import TYPE_CHECKING, Protocol
 from warnings import warn
 
 import event_model
@@ -173,6 +176,37 @@ class RunEngineStateMachine(StateMachine):
         ]
 
 
+if TYPE_CHECKING:
+
+    class StateHook(Protocol):
+        """Type stub for the state_hook variable of RunEngine."""
+
+        def __call__(self, new_state, old_state) -> None: ...
+
+    class _RunEngineState(str):
+        """Type stub for the state returned by RunEngine._state / RunEngine.state."""
+
+        is_idle: bool
+        is_running: bool
+        is_pausing: bool
+        is_paused: bool
+        is_halting: bool
+        is_stopping: bool
+        is_aborting: bool
+        is_suspending: bool
+        is_panicked: bool
+        can_pause: bool
+        can_be_idle: bool
+        can_be_running: bool
+        can_be_pausing: bool
+        can_be_paused: bool
+        can_be_halting: bool
+        can_be_stopping: bool
+        can_be_aborting: bool
+        can_be_suspending: bool
+        can_be_panicked: bool
+
+
 class LoggingPropertyMachine(PropertyMachine):
     """expects object to have a `log` attribute
     and a `state_hook` attribute that is ``None`` or a callable with signature
@@ -181,7 +215,7 @@ class LoggingPropertyMachine(PropertyMachine):
     def __init__(self, machine_type):
         super().__init__(machine_type)
 
-    def __set__(self, obj, value):
+    def __set__(self, obj: RunEngine, value):
         own = type(obj)
         old_value = self.__get__(obj, own)
         with obj._state_lock:
@@ -193,7 +227,7 @@ class LoggingPropertyMachine(PropertyMachine):
         if obj.state_hook is not None:
             obj.state_hook(value, old_value)
 
-    def __get__(self, instance, owner):
+    def __get__(self, instance: RunEngine | None, owner):  # pyright: ignore[reportIncompatibleMethodOverride]
         if instance is None:
             return super().__get__(instance, owner)
         with instance._state_lock:
@@ -380,12 +414,13 @@ class RunEngine:
         "remove_suspender",
         "_start_suspender",
     ]
+    state_hook: StateHook | None
 
     RunBundler = RunBundler
 
     @property
-    def state(self):
-        return self._state
+    def state(self) -> _RunEngineState:
+        return self._state  # pyright: ignore[reportReturnType]
 
     @property
     def deferred_pause_requested(self):
@@ -708,11 +743,13 @@ class RunEngine:
 
     @property
     def verbose(self):
-        return not self.log.disabled
+        # TODO Include test coverage for this property.
+        return not self.log.logger.disabled
 
     @verbose.setter
     def verbose(self, value):
-        self.log.disabled = not value
+        # TODO Include test coverage for this property.
+        self.log.logger.disabled = not value
 
     @property
     def call_returns_result(self):
@@ -925,7 +962,7 @@ class RunEngine:
                 raise RuntimeError(text)
 
         # If we are in the wrong state, raise.
-        if not self._state.is_idle:
+        if not self.state.is_idle:
             raise RuntimeError(f"The RunEngine is in a {self._state} state")
 
         futs = []
@@ -1005,9 +1042,9 @@ class RunEngine:
             raise RuntimeError("The RunEngine is panicked and cannot be recovered. You must restart bluesky.")
 
         # The state machine does not capture the whole picture.
-        if not self._state.is_paused:
+        if not self.state.is_paused:
             raise TransitionError(
-                f"The RunEngine is the {self._state} state. You can only resume for the paused state."
+                f"The RunEngine is the {self.state} state. You can only resume for the paused state."
             )
 
         self._interrupted = False
@@ -1230,7 +1267,7 @@ class RunEngine:
                 self._interrupted = True
                 with self._state_lock:
                     self._exception = FailedPause()
-                was_paused = self._state == "paused"
+                was_paused = self.state == "paused"
                 self._state = "aborting"
                 if not was_paused:
                     self._task.cancel()
@@ -1246,7 +1283,7 @@ class RunEngine:
             # The event loop is still running. The pre_plan will be processed,
             # and then the RunEngine will be hung up on processing the
             # 'wait_for' message until `fut` is set.
-            if not self._state == "paused":
+            if not self.state == "paused":
                 self._state = "suspending"
                 # bump the _run task out of what ever it is awaiting
                 self._task.cancel()
@@ -1329,7 +1366,7 @@ class RunEngine:
         return self.__interrupter_helper(self._abort_coro(reason))
 
     async def _abort_coro(self, reason):
-        if self._state.is_idle:
+        if self.state.is_idle:
             raise TransitionError("RunEngine is already idle.")
         print("Aborting: running cleanup and marking exit_status as 'abort'...")
         self._interrupted = True
@@ -1338,7 +1375,7 @@ class RunEngine:
         self._exit_status = "abort"
         self._destroy_open_run_tracing_spans()
 
-        was_paused = self._state == "paused"
+        was_paused = self.state == "paused"
         self._state = "aborting"
         if was_paused:
             with self._state_lock:
@@ -1373,12 +1410,12 @@ class RunEngine:
         return self.__interrupter_helper(self._stop_coro())
 
     async def _stop_coro(self):
-        if self._state.is_idle:
+        if self.state.is_idle:
             raise TransitionError("RunEngine is already idle.")
         print("Stopping: running cleanup and marking exit_status as 'success'...")
 
         self._interrupted = True
-        was_paused = self._state == "paused"
+        was_paused = self.state == "paused"
         self._state = "stopping"
         if was_paused:
             with self._state_lock:
@@ -1428,7 +1465,7 @@ class RunEngine:
             task = self.loop.create_task(coro)
             task.add_done_callback(end_cb)
 
-        was_paused = self._state == "paused"
+        was_paused = self.state == "paused"
         self.loop.call_soon_threadsafe(start_task)
         coro_event.wait()
         if was_paused:
@@ -1437,12 +1474,12 @@ class RunEngine:
         return task.result()
 
     async def _halt_coro(self):
-        if self._state.is_idle:
+        if self.state.is_idle:
             raise TransitionError("RunEngine is already idle.")
         print("Halting: skipping cleanup and marking exit_status as 'abort'...")
         self._destroy_open_run_tracing_spans()
         self._interrupted = True
-        was_paused = self._state == "paused"
+        was_paused = self.state == "paused"
         self._state = "halting"
         if was_paused:
             with self._state_lock:
@@ -1502,7 +1539,7 @@ class RunEngine:
         try:
             self._state = "running"
             while True:
-                if self._state in ("pausing", "suspending"):
+                if self.state in ("pausing", "suspending"):
                     if not self.resumable:
                         self._run_permit.set()
                         stashed_exception = FailedPause()
@@ -1512,12 +1549,12 @@ class RunEngine:
                 # currently only using 'suspending' to get us into the
                 # block above, we do not have a 'suspended' state
                 # (yet)
-                if self._state == "suspending":
+                if self.state == "suspending":
                     self._state = "running"
                 if not self._run_permit.is_set():
                     # A pause has been requested. First, put everything in a
                     # resting state.
-                    assert self._state == "pausing"
+                    assert self.state == "pausing"
                     # Remove any monitoring callbacks, but keep refs in
                     # self._monitor_params to re-instate them later.
                     for current_run in self._run_bundlers.values():
@@ -1541,7 +1578,7 @@ class RunEngine:
                     # Restore any monitors
                     for current_run in self._run_bundlers.values():
                         await current_run.restore_monitors()
-                    if self._state == "paused":
+                    if self.state == "paused":
                         # may be called by 'resume', 'stop', 'abort', 'halt'
                         self._state = "running"
 
@@ -1706,20 +1743,20 @@ class RunEngine:
                     )
                     await self._halt_coro()
                 except asyncio.CancelledError as e:
-                    if self._state == "pausing":
+                    if self.state == "pausing":
                         # if we got a CancelledError and we are in the
                         # 'pausing' state clear the run permit and
                         # bounce to the top
                         self._run_permit.clear()
                         continue
-                    if self._state in ("halting", "stopping", "aborting"):
+                    if self.state in ("halting", "stopping", "aborting"):
                         # if we got this while just keep going in tear-down
                         exception_map = {"halting": PlanHalt, "stopping": RequestStop, "aborting": RequestAbort}
                         # if the exception is not set bounce to the top
                         if stashed_exception is None:
                             stashed_exception = exception_map[self.state]
                         continue
-                    if self._state == "suspending":
+                    if self.state == "suspending":
                         # just bounce to the top
                         continue
                     # if we are handling this twice, raise and leave the plans
