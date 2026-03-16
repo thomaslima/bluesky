@@ -1,6 +1,7 @@
 import collections.abc
 import functools
 import operator
+from collections.abc import Sequence
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -351,7 +352,7 @@ def outer_list_product(args, snake_axes):
     return snake_cyclers(cyclers, snaking)
 
 
-def inner_product(num, args: list[Movable[float] | float]):
+def inner_product(num, args: Sequence[Movable[float] | float]):
     """Scan over one multi-motor trajectory.
 
     Parameters

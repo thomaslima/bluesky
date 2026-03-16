@@ -56,7 +56,7 @@ class PerStep1D(Protocol):
         detectors: Sequence[Readable],
         motor: Movable,
         step: Any,
-        take_reading: bps.TakeReading | None = ...,
+        take_reading: bps.TakeReading | None = None,
     ) -> MsgGenerator: ...
 
 
@@ -64,9 +64,9 @@ class PerStepND(Protocol):
     def __call__(
         self,
         detectors: Sequence[Readable],
-        motors: Mapping[Movable, Any],
-        step: dict[Movable, Any],
-        take_reading: bps.TakeReading | None = ...,
+        step: Mapping[Movable, Any],
+        pos_cache: dict[Movable, Any],
+        take_reading: bps.TakeReading | None = None,
     ) -> MsgGenerator: ...
 
 
@@ -369,7 +369,7 @@ def list_grid_scan(
         "motors": tuple(motor_names),
         "hints": {},
     }
-    _md.update(md or {})  # type: ignore
+    _md.update(md or {})
     try:
         motor_hints = [(m.hints["fields"], "primary") for m in motors]
         assert isinstance(_md["hints"], dict), "Hints must be a dictionary"
@@ -1012,10 +1012,10 @@ def tune_centroid(
         sum_I = 0  # for peak centroid calculation, I(x)
         sum_xI = 0
         if os.environ.get("BLUESKY_PREDECLARE", False):
-            yield from bps.declare_stream(motor, *detectors, name="primary")  # type: ignore
+            yield from bps.declare_stream(motor, *detectors, name="primary")
         while abs(step) >= min_step and low_limit <= next_pos <= high_limit:
             yield Msg("checkpoint")
-            yield from bps.mv(motor, next_pos)  # type: ignore      # Movable
+            yield from bps.mv(motor, next_pos)  # Movable
             ret = yield from bps.trigger_and_read(list(detectors) + [motor])  # type: ignore
             cur_I = ret[signal]["value"]
             sum_I += cur_I
@@ -1045,7 +1045,7 @@ def tune_centroid(
         if peak_position is not None:
             # improvement: report final peak_position
             # print("final position = {}".format(peak_position))
-            yield from bps.mv(motor, peak_position)  # type: ignore      # Movable
+            yield from bps.mv(motor, peak_position)  # Movable
 
     return (yield from _tune_core(start, stop, num, signal))
 
@@ -1113,7 +1113,7 @@ def scan_nd(
 
     predeclare = per_step is None and os.environ.get("BLUESKY_PREDECLARE", False)
     if per_step is None:
-        per_step = bps.one_nd_step
+        _per_step = bps.one_nd_step
     else:
         # Ensure that the user-defined per-step has the expected signature.
         sig = inspect.signature(per_step)
@@ -1153,10 +1153,10 @@ def scan_nd(
             return True
 
         if sig == inspect.signature(bps.one_nd_step):
-            pass
+            _per_step = cast(PerStepND, per_step)
         elif _verify_nd_step(sig):
             # check other signature for back-compatibility
-            pass
+            _per_step = cast(PerStepND, per_step)
         elif _verify_1d_step(sig):
             # Accept this signature for back-compat reasons (because
             # inner_product_scan was renamed scan).
@@ -1164,15 +1164,19 @@ def scan_nd(
             if dims != 1:
                 raise TypeError(f"Signature of per_step assumes 1D trajectory but {dims} motors are specified.")
             (motor,) = cycler.keys
-            user_per_step = per_step
+            user_per_step = cast(PerStep1D, per_step)
 
-            def adapter(detectors, step, pos_cache):
+            def adapter(
+                detectors: Sequence[Readable],
+                step: Mapping[Movable, Any],
+                pos_cache: dict[Movable, Any],
+            ) -> MsgGenerator[Any]:
                 # one_nd_step 'step' parameter is a dict; one_id_step 'step'
                 # parameter is a value
                 (step,) = step.values()
                 return (yield from user_per_step(detectors, motor, step))
 
-            per_step = adapter  # type: ignore
+            _per_step = adapter
         else:
             raise TypeError(
                 "per_step must be a callable with the signature \n "
@@ -1190,7 +1194,7 @@ def scan_nd(
         if predeclare:
             yield from bps.declare_stream(*motors, *detectors, name="primary")
         for step in list(cycler):
-            yield from per_step(detectors, step, pos_cache)  # type: ignore
+            yield from _per_step(detectors, step, pos_cache)
 
     return (yield from inner_scan_nd())
 
@@ -1556,7 +1560,7 @@ def rel_grid_scan(
     return (yield from inner_rel_grid_scan())
 
 
-def relative_inner_product_scan(  # type: ignore
+def relative_inner_product_scan(
     detectors: Sequence[ChildReadableAndStageable],
     num: int,
     *args: Movable | Any,
