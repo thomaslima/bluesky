@@ -80,6 +80,7 @@ T_child_contra = TypeVar("T_child_contra", contravariant=True, bound=HasParent)
 
 #: Return type of a plan, usually None. Always optional for dry-runs.
 P = TypeVar("P")
+P2 = TypeVar("P2")
 
 #: Send type of a plan
 S = TypeVar("S")

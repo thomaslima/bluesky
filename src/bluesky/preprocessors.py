@@ -4,8 +4,6 @@ from collections.abc import Callable, Iterable
 from functools import wraps
 from typing import Any, overload
 
-from typing_extensions import TypeVar
-
 from bluesky.protocols import HasParent, Locatable, Stageable, check_supports
 from bluesky.utils import MsgGenerator
 
@@ -20,6 +18,7 @@ from .plan_stubs import (
     unstage_all,
 )
 from .utils import (
+    P2,
     Msg,
     MsgGeneratorSP,
     P,
@@ -35,10 +34,6 @@ from .utils import (
     single_gen,
 )
 from .utils import short_uid as _short_uid
-
-# Return types of Plans
-P = TypeVar("P")
-P2 = TypeVar("P2")
 
 
 def plan_mutator(
@@ -90,17 +85,18 @@ def plan_mutator(
     """
     # internal stacks
     msgs_seen = dict()  # noqa: C408
-    plan_stack = deque()
-    result_stack = deque()
+    plan_stack = deque[MsgGeneratorSP[S, P]]()
+    result_stack = deque[S | Any]()
     tail_cache = dict()  # noqa: C408
     tail_result_cache = dict()  # noqa: C408
     exception = None
 
     parent_plan = plan
-    ret_value = None
+    ret_value: P = None  # pyright: ignore[reportAssignmentType]
     # seed initial conditions
     plan_stack.append(plan)
     result_stack.append(None)
+    ret = None
 
     while True:
         # get last result
@@ -1103,7 +1099,7 @@ def __read_and_stash_a_motor(obj: HasParent, initial_positions, coupled_parents)
             setpoint = location["setpoint"]
     # Otherwise it might have a `position` attribution
     elif hasattr(obj, "position"):
-        setpoint = obj.position
+        setpoint = obj.position  # pyright: ignore[reportAttributeAccessIssue]
     # Otherwise fallback to read obj and grab the value of the first key
     else:
         reading = yield from __get_result_of_message("read", obj)
@@ -1130,15 +1126,15 @@ def __read_and_stash_a_motor(obj: HasParent, initial_positions, coupled_parents)
     # if we move a pseudo positioner also stash it's children
     # TODO implement protocol for .pseudo_positioners
     if obj in coupled_parents:
-        for c, p in zip(obj.pseudo_positioners, setpoint):
+        for c, p in zip(obj.pseudo_positioners, setpoint):  # pyright: ignore[reportArgumentType, reportAttributeAccessIssue]
             initial_positions[c] = p
 
     # if we move a pseudo single, also stash it's parent and siblings
     parent = obj.parent
-    if parent in coupled_parents and obj in parent.pseudo_positioners:
-        parent_pos = parent.position
+    if parent in coupled_parents and obj in parent.pseudo_positioners:  # pyright: ignore[reportOptionalMemberAccess]
+        parent_pos = parent.position  # pyright: ignore[reportOptionalMemberAccess]
         initial_positions[parent] = parent_pos
-        for c, p in zip(parent.pseudo_positioners, parent_pos):
+        for c, p in zip(parent.pseudo_positioners, parent_pos):  # pyright: ignore[reportOptionalMemberAccess]
             initial_positions[c] = p
 
     # TODO forbid mixed pseudo / real motion
